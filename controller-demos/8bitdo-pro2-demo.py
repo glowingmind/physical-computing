@@ -4,6 +4,38 @@ from gpiozero import RGBLED
 from random import Random
 from time import sleep
 
+def find_device(device_name):
+    for device in evdev.list_devices():
+        dev = evdev.InputDevice(device)
+        if device_name in dev.name:
+            return dev
+    return None
+
+def handle_input_event(event, button_map):
+    if event.type == evdev.ecodes.EV_KEY and event.value == 1:
+        button = button_map.get(event.code)
+        if button:
+            print(f"Button {button} pressed")
+
+def main():
+    device_name = "Your Device Name"
+    button_map = {
+        evdev.ecodes.KEY_A: "A",
+        evdev.ecodes.KEY_B: "B",
+        # Add more key mappings as needed
+    }
+
+    dev = find_device(device_name)
+    if not dev:
+        print(f"Device '{device_name}' not found")
+        return
+
+    for event in dev.read_loop():
+        handle_input_event(event, button_map)
+
+if __name__ == "__main__":
+    main()
+
 # create callable object to access controller data
 rmtctl = InputDevice('/dev/input/event7')
 
@@ -11,13 +43,13 @@ rmtctl = InputDevice('/dev/input/event7')
 led = RGBLED(18, 23, 24)
 rnd = Random()
 values = [0, 0, 0]
-isManualConfig = False
-activeValue = 0
+is_manual_config = False
+active_value = 0
 
 # print out controller data
 print(rmtctl)
 
-def shiftList(l):
+def shift_list(l):
     return l[-1:]+l[:-1]
 
 try:
@@ -27,8 +59,8 @@ try:
             # print(categorize(event))
             # print(event.code)
             if event.code == 310 and event.value == 1:
-                isManualConfig = not isManualConfig
-                if not isManualConfig:
+                is_manual_config = not is_manual_config
+                if not is_manual_config:
                     led.pulse(
                         fade_in_time=1,
                         fade_out_time=1,
@@ -38,7 +70,7 @@ try:
                         background=True
                     )
                 continue
-            if not isManualConfig:
+            if not is_manual_config:
                 if event.code == 305 and event.value == 1:
                     for i, v in enumerate(values):
                         values[i] = round(rnd.random(), 2)
@@ -52,28 +84,32 @@ try:
                     )
                 if event.code == 304 and event.value == 1:
                     led.off()
-        elif event.type == ecodes.EV_ABS and isManualConfig:
+        elif event.type == ecodes.EV_ABS and is_manual_config:
             # print(event)
             # print(categorize(event))
-            if event.code == 17 and event.value < 0 and values[activeValue] < 1:
-                values[activeValue] = round(values[activeValue] + 0.01, 2)
+            if event.code == 17 and event.value < 0 and values[active_value] < 1:
+                values[active_value] = round(values[active_value] + 0.01, 2)
                 led.color = (tuple(values))
                 print(values)
-            if event.code == 17 and event.value > 0 and values[activeValue] > 0:
-                values[activeValue] = round(values[activeValue] - 0.01, 2)
+            if event.code == 17 and event.value > 0 and values[active_value] > 0:
+                values[active_value] = round(values[active_value] - 0.01, 2)
                 led.color = (tuple(values))
                 print(values)
             if event.code == 16 and event.value > 0:
-                activeValue = activeValue + 1
-                if activeValue > 2:
-                    activeValue = 0
+                active_value = active_value + 1
+                if active_value > 2:
+                    active_value = 0
                 continue
             if event.code == 16 and event.value < 0:
-                activeValue = activeValue - 1
-                if activeValue < 0:
-                    activeValue = 2
+                active_value = active_value - 1
+                if active_value < 0:
+                    active_value = 2
                 continue
-
+# except FileNotFoundError as e:
+#     if e.errno == 2:
+#         print("Controller device not found")
+#     # print(f"Error occurred: {e}")
+#     exit(1)
 except OSError as e:
     if e.errno == 19:
         print("Controller device disconnected")
