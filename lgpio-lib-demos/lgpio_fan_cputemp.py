@@ -5,88 +5,93 @@ import time
 import sys
 
 # === CONFIGURATION ===
-FAN_PIN = 21          # BCM 21 = Physical pin 40. Change if you used a different BCM number.
-TEMP_THRESHOLD = 45.0 # Degrees Celsius
-CHECK_INTERVAL = 15   # Seconds between temp checks in IDLE/COOLING
-HOLD_DURATION = 60    # Seconds to keep fan ON after temp drops
+FAN_PIN = 21          # BCM 21 = Physical pin 40. Change to 9 if using Physical pin 21.
+TEMP_THRESHOLD = 40.0 # Degrees Celsius (set to 40 for your test)
+CHECK_INTERVAL = 15   # Seconds between temp checks
+HOLD_DURATION = 30    # Seconds to keep fan ON after temp drops
 POST_WAIT_DURATION = 60 # Seconds to wait with fan OFF before re-checking
 
 # === HELPER FUNCTIONS ===
 def get_cpu_temp():
-    """Reads CPU temp via vcgencmd and returns it as a float."""
     try:
-        # Run the command
         output = subprocess.check_output(['vcgencmd', 'measure_temp'], text=True)
-        # Output looks like: "temp=39.4'C"
-        temp_str = output.split('=')[1].strip()   # Get "39.4'C"
-        temp_str = temp_str.split("'")[0]         # Get "39.4"
+        temp_str = output.split('=')[1].strip().split("'")[0]
         return float(temp_str)
     except Exception as e:
-        print(f"⚠️  Error reading temperature: {e}")
-        # Return a safe value (e.g., 0) to avoid false triggers, but print error.
-        # Alternatively, return float('inf') to force fan ON as a safety measure.
-        # I'll return 0 so it doesn't accidentally turn on due to read error.
+        print(f"\n⚠️  Error reading temperature: {e}")
         return 0.0
 
 def fan_on(chip):
     lgpio.gpio_write(chip, FAN_PIN, 1)
-    print("🟢 Fan: ON")
 
 def fan_off(chip):
     lgpio.gpio_write(chip, FAN_PIN, 0)
-    print("🔴 Fan: OFF")
+
+def status_line(msg):
+    """Print a status message, completely clearing the current line first."""
+    sys.stdout.write(f'\r\033[K{msg}')  # \033[K clears from cursor to end of line
+    sys.stdout.flush()
+
+def newline():
+    """Move the cursor to the next line without printing any extra spaces."""
+    sys.stdout.write('\n')
+    sys.stdout.flush()
 
 # === MAIN STATE MACHINE ===
 def main():
-    # Open GPIO chip
     chip = lgpio.gpiochip_open(0)
     try:
-        # Claim the pin as output, starting in OFF state
         lgpio.gpio_claim_output(chip, FAN_PIN, 0)
         print(f"🚀 Fan controller started. Threshold: {TEMP_THRESHOLD}°C")
-        print(f"   Checking every {CHECK_INTERVAL}s. Hold time: {HOLD_DURATION}s.\n")
+        print(f"   Check interval: {CHECK_INTERVAL}s | Hold time: {HOLD_DURATION}s")
+        print("─" * 50)
 
         while True:
             # ---------- STATE: IDLE ----------
-            print("⏳ [IDLE] Fan OFF. Monitoring temp...")
             while True:
                 temp = get_cpu_temp()
-                print(f"   Temp: {temp:.1f}°C", end="")
                 if temp > TEMP_THRESHOLD:
-                    print(" → 🔥 Threshold exceeded! Activating fan.")
+                    newline()  # <-- CRITICAL: move to a fresh line before printing
+                    print(f"🔥 {temp:.1f}°C exceeded {TEMP_THRESHOLD}°C – turning fan ON.")
                     fan_on(chip)
-                    break  # Exit IDLE loop, go to COOLING
+                    break
                 else:
-                    print(" (Below threshold, waiting)")
+                    status_line(f"⏳ [IDLE] Temp: {temp:.1f}°C | Fan OFF | Next check in {CHECK_INTERVAL}s")
                 time.sleep(CHECK_INTERVAL)
 
             # ---------- STATE: COOLING ----------
-            print("🌬️  [COOLING] Fan ON. Watching for temp drop...")
             while True:
                 temp = get_cpu_temp()
-                print(f"   Temp: {temp:.1f}°C", end="")
                 if temp <= TEMP_THRESHOLD:
-                    print(" → ✅ Temperature dropped! Entering HOLD state.")
-                    break  # Exit COOLING loop, go to HOLD
+                    newline()  # <-- CRITICAL: move to a fresh line before printing
+                    print(f"✅ {temp:.1f}°C dropped to threshold – fan will stay ON for hold period.")
+                    break
                 else:
-                    print(" (Still hot, continuing)")
+                    status_line(f"🌬️  [COOLING] Temp: {temp:.1f}°C | Fan ON  | Cooling down...")
                 time.sleep(CHECK_INTERVAL)
 
             # ---------- STATE: HOLD ----------
-            # (Fan stays ON, we stop checking temp completely)
             print(f"⏱️  [HOLD] Keeping fan ON for {HOLD_DURATION}s (ignoring temp).")
-            time.sleep(HOLD_DURATION)
+            for remaining in range(HOLD_DURATION, 0, -1):
+                status_line(f"⏱️  [HOLD] Fan ON | Countdown: {remaining:3}s remaining")
+                time.sleep(1)
+            newline()  # Move to next line after countdown finishes
+
             fan_off(chip)
+            print("🔴 Fan turned OFF.")
 
             # ---------- STATE: POST_OFF_WAIT ----------
-            print(f"🕒 [POST_OFF_WAIT] Fan OFF. Waiting {POST_WAIT_DURATION}s before resuming checks.")
-            time.sleep(POST_WAIT_DURATION)
-            print("↩️  Returning to IDLE state.\n")
+            print(f"🕒 [POST_OFF_WAIT] Waiting {POST_WAIT_DURATION}s before resuming checks.")
+            for remaining in range(POST_WAIT_DURATION, 0, -1):
+                status_line(f"🕒 [POST_OFF_WAIT] Countdown: {remaining:3}s until re-checking")
+                time.sleep(1)
+            newline()  # Move to next line
+            print("↩️  Returning to IDLE state.")
+            print("─" * 50)
 
     except KeyboardInterrupt:
-        print("\n🛑 Script interrupted by user.")
+        print("\n🛑 Script interrupted.")
     finally:
-        # Safety: turn fan off and release GPIO
         fan_off(chip)
         lgpio.gpiochip_close(chip)
         print("🧹 GPIO cleaned up. Goodbye!")
